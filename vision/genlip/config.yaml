@@ -1,0 +1,64 @@
+seed: 67
+
+model:
+  num_channels: 3
+  patch_size: 16
+  spatial_merge_size: 1
+
+  hidden_size: 1152
+  intermediate_size: 3072
+  num_hidden_layers: 27
+  num_attention_heads: 16
+  vocab_size: 151936
+  layer_norm_eps: 1e-6
+
+  use_swiglu_ffn: true
+  gated_attention: true
+  ls_init_value: 0.1
+  drop_path_rate: 0.1
+
+  mrope_sections: [12, 12, 12]
+  mrope_theta: 10000.0
+
+  attention_dropout: 0.0
+  max_position_embeddings: 4096
+
+data:
+  dataset_name: gorovuha/ru_image_captioning
+  cache_dir: data
+  train_split: train
+  eval_split: validation
+  caption_column: capt2
+  image_size: 224
+  tokenizer_name: Qwen/Qwen3-0.6B
+  
+  batch_size: 4
+  num_workers: 1
+  pin_memory: true
+  drop_last: true
+
+optimizer:
+  name: adamw
+  learning_rate: 1e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.95]
+  eps: 1e-8
+
+scheduler:
+  name: cosine
+  warmup_steps: 200
+  min_lr_ratio: 0.1
+
+trainer:
+  max_steps: 2000
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  eval_steps: 200
+  save_steps: 500
+  bf16: true
+
+parallel:
+  replicate: 1
+  shard: 1
+  bf16: true
+
