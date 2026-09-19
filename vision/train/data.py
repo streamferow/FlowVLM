@@ -1,5 +1,6 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data.distributed import DistributedSampler
 
 import numpy as np
 from PIL import Image
@@ -96,16 +97,37 @@ def build_dataloader(
     config: DataConfig,
     tokenizer,
     split: str | None = None,
+    *,
+    rank: int | None = None,
+    world_size: int | None = None,
 ) -> DataLoader:
     split = split or config.train_split
     dataset = CaptionDataset(config, tokenizer, split=split)
-    dataloader = DataLoader(
+    is_train = split == config.train_split
+    distributed = (
+        rank is not None
+        and world_size is not None
+        and world_size > 1
+    )
+
+    sampler = None
+    shuffle = is_train and not distributed
+    if distributed:
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            shuffle=is_train,
+            drop_last=config.drop_last,
+        )
+
+    return DataLoader(
         dataset,
         batch_size=config.batch_size,
-        shuffle=(split == "train"),
+        shuffle=shuffle,
+        sampler=sampler,
         collate_fn=lambda x: collate_fn(x, tokenizer.pad_token_id),
         num_workers=config.num_workers,
         pin_memory=config.pin_memory,
         drop_last=config.drop_last,
     )
-    return dataloader

@@ -73,5 +73,5 @@ trainer:
 
 parallel:
   replicate: 1
-  shard: 1
+  shard: 2
   bf16: true
