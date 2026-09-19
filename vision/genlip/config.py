@@ -122,6 +122,11 @@ def load_config(path: str | Path) -> Config:
 
     model_raw = dict(raw["model"])
     model_raw["mrope_sections"] = tuple(model_raw["mrope_sections"])
+    model_raw["layer_norm_eps"] = float(model_raw["layer_norm_eps"])
+    model_raw["ls_init_value"] = float(model_raw["ls_init_value"])
+    model_raw["drop_path_rate"] = float(model_raw["drop_path_rate"])
+    model_raw["mrope_theta"] = float(model_raw["mrope_theta"])
+    model_raw["attention_dropout"] = float(model_raw["attention_dropout"])
 
     data_raw = dict(raw["data"])
     data_raw["cache_dir"] = _resolve_path(data_raw["cache_dir"])
