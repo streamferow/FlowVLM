@@ -3,6 +3,7 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
+from tqdm import tqdm
 
 from .parallel import is_main_process
 
@@ -66,20 +67,20 @@ class Trainer:
         loss.backward()
         return loss.detach()
 
-    def _log_metrics(self, avg_loss: float, lr: float):
+    def _log_metrics(self, avg_loss: float, lr: float, pbar: tqdm | None = None):
         self.loss_history.append((self.step, avg_loss))
 
-        if self.log_dir is None:
-            return
+        if self.log_dir is not None:
+            with (self.log_dir / "loss.csv").open("a", newline="") as f:
+                csv.writer(f).writerow([self.step, f"{avg_loss:.6f}", f"{lr:.2e}"])
 
-        with (self.log_dir / "loss.csv").open("a", newline="") as f:
-            csv.writer(f).writerow([self.step, f"{avg_loss:.6f}", f"{lr:.2e}"])
+        if pbar is not None:
+            pbar.set_postfix(loss=f"{avg_loss:.4f}", lr=f"{lr:.2e}", refresh=False)
 
-        if self.step % self.config.log_every != 0:
-            return
-
-        print(f"step={self.step} loss={avg_loss:.4f} lr={lr:.2e}")
-        self._save_loss_plot()
+        if self.step % self.config.log_every == 0:
+            self._save_loss_plot()
+            if pbar is not None:
+                pbar.refresh()
 
     def _save_loss_plot(self):
         if self.log_dir is None or not self.loss_history:
@@ -108,6 +109,12 @@ class Trainer:
         iterator = iter(self.loader)
         self.optimizer.zero_grad(set_to_none=True)
 
+        pbar = tqdm(
+            total=self.config.max_steps,
+            desc="train",
+            disable=not is_main_process(),
+        )
+
         while self.step < self.config.max_steps:
             step_loss = torch.zeros((), device=self.device)
             for _ in range(self.config.gradient_accumulation_steps):
@@ -122,8 +129,10 @@ class Trainer:
 
             avg_loss = step_loss.item() * self.config.gradient_accumulation_steps
             lr = self.scheduler.get_last_lr()[0]
-            self._log_metrics(avg_loss, lr)
+            self._log_metrics(avg_loss, lr, pbar=pbar)
+            pbar.update(1)
 
+        pbar.close()
         self._save_loss_plot()
         if self.log_dir is not None:
             print(f"loss log saved to {self.log_dir / 'loss.csv'}")
