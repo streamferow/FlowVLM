@@ -33,14 +33,17 @@ class DARTScorePredictionNetwork(nn.Module):
         self.features = features
         self.mlp = DARTMLP(config)
 
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.features.eval()
+        return self
+
     def forward(
         self, 
         x: torch.Tensor,       # (B, C, H, W)
         shape: tuple[int, int] # (Hp, Wp)
     ) -> torch.Tensor:
-        # MobileNet BatchNorm buffers are fp32; run backbone outside low-precision cast.
-        with torch.autocast(device_type=x.device.type, enabled=False):
-            x = self.features(x.float())
+        x = self.features(x)
         # B, H, W, C
         x = x.permute(0, 2, 3, 1)
         
