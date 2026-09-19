@@ -417,8 +417,8 @@ class GenLIP(nn.Module):
                 f"padded_seq_len={padded_seq_len} > max_position_embeddings={self.max_position_embeddings}"
             )
 
-        def prefix_lm(batch_idx: int, head_idx: int, query_idx: int, key_idx: int) -> bool:
-            # real (not padded) query and key
+        def prefix_lm(batch_idx, head_idx, query_idx, key_idx):
+             # real (not padded) query and key
             real_query = query_idx < seq_len
             real_key = key_idx < seq_len
 
@@ -428,16 +428,16 @@ class GenLIP(nn.Module):
             key_is_text = key_idx >= vision_len
             
             # vision to vision, full attention within vision tokens
-            vision_attends_vision = query_is_vision and key_is_vision
+            vision_attends_vision = query_is_vision & key_is_vision
 
             # text to vision, causal attention from text to vision tokens
-            text_attends_vision = query_is_text and key_is_vision
+            text_attends_vision = query_is_text & key_is_vision
 
             # text to text, causal attention within text tokens in causal order
-            text_attends_text = (query_is_text and key_is_text and (key_idx <= query_idx))
+            text_attends_text = query_is_text & key_is_text & (key_idx <= query_idx)
 
-            allowed = vision_attends_vision or text_attends_vision or text_attends_text
-            return real_query and real_key and allowed
+            allowed = vision_attends_vision | text_attends_vision | text_attends_text
+            return real_query & real_key & allowed
 
         block_mask = create_block_mask(
             prefix_lm,
