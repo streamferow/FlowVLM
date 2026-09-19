@@ -46,7 +46,7 @@ data:
   tokenizer_name: Qwen/Qwen3-0.6B
   max_text_length: 128
 
-  batch_size: 2
+  batch_size: 1
   num_workers: 1
   pin_memory: true
   drop_last: true
@@ -76,4 +76,4 @@ trainer:
 parallel:
   replicate: 1
   shard: 1
-  bf16: false
+  bf16: true

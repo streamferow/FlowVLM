@@ -20,9 +20,11 @@ def _flex_attention_block_size() -> int:
 
 
 def _build_flex_attention():
-    if torch.cuda.is_available() and torch.cuda.get_device_capability() >= (8, 0):
+    if not torch.cuda.is_available():
+        return flex_attention
+    if torch.cuda.get_device_capability() >= (8, 0):
         return torch.compile(flex_attention, dynamic=False, mode="max-autotune-no-cudagraphs")
-    return flex_attention
+    return torch.compile(flex_attention, dynamic=False, mode="default")
 
 
 class SpatialMerger(nn.Module):

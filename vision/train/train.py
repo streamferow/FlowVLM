@@ -21,6 +21,7 @@ def main(config_path: str):
 
     tokenizer = build_tokenizer(config.data.tokenizer_name)
     model = GenLIP(config.model, config.dart).to(device)
+    model.encoder.gradient_checkpointing = True
     model = apply_hsdp(model, mesh, bf16=config.parallel.bf16)
 
     loader = build_dataloader(
