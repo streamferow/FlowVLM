@@ -1,5 +1,4 @@
 from __future__ import annotations
-from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -9,47 +8,42 @@ from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 from timm.layers import DropPath
 
 from transformer.interleaved_mrope import apply_rotary_embeddings, build_mrope_frequencies
-from transformer.model import RMSNorm
+from vision.tokenizer.dart import build_dart
+
+from .config import DARTConfig, ModelConfig
 
 
-@dataclass
-class GenLIPConfig:
-    # vision
-    num_channels: int = 3
-    patch_size: int = 16
-    spatial_merge_size: int = 1
+class SpatialMerger(nn.Module):
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        self.merge_size = config.spatial_merge_size
+        if self.merge_size > 1:
+            self.proj = nn.Linear(
+                config.hidden_size * self.merge_size ** 2,
+                config.hidden_size,
+                bias=False,
+            )
 
-    # trunk
-    hidden_size: int = 1152
-    intermediate_size: int = 3072
-    num_hidden_layers: int = 27
-    num_attention_heads: int = 16
-    vocab_size: int = 151936
-    layer_norm_eps: float = 1e-6
-
-    # stability
-    use_swiglu_ffn: bool = True
-    gated_attention: bool = True
-    ls_init_value: float = 0.1
-    drop_path_rate: float = 0.1
-
-    # interleaved mrope
-    # sum(mrope_sections) == (hidden_size // num_heads) // 2
-    mrope_sections: tuple[int, int, int] = (12, 12, 12)
-    mrope_theta: float = 10_000.0
-
-    attention_dropout: float = 0.0
-    max_position_embeddings: int = 4096
-
+    def forward(self, tokens: torch.Tensor, grid_h: int, grid_w: int) -> torch.Tensor:
+        if self.merge_size == 1:
+            return tokens
+        batch_size, _, hidden_size = tokens.shape
+        merge = self.merge_size
+        tokens = tokens.view(batch_size, grid_h, grid_w, hidden_size)
+        merged_h, merged_w = grid_h // merge, grid_w // merge
+        tokens = tokens.view(batch_size, merged_h, merge, merged_w, merge, hidden_size)
+        tokens = tokens.permute(0, 1, 3, 2, 4, 5).reshape(
+            batch_size, merged_h * merged_w, merge * merge * hidden_size
+        )
+        return self.proj(tokens)
 
 
 class GenLIPVisionEmbeddings(nn.Module):
-    def __init__(self, config: GenLIPConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
         self.embedding_dim = config.hidden_size
         self.patch_size = config.patch_size
-        self.spatial_merge_size = config.spatial_merge_size
 
         self.patch_embedding = nn.Conv2d(
             in_channels=config.num_channels,
@@ -97,7 +91,7 @@ def encode_captions(tokenizer: AutoTokenizer, texts: list[str], max_len: int):
     return input_ids, labels
 
 class TextEmbedding(nn.Module):
-    def __init__(self, config: GenLIPConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.token_embedding = nn.Embedding(
             config.vocab_size,
@@ -134,7 +128,7 @@ def calculate_pad_length(seq_len: int, block_size: int = 128) -> int:
 
 
 class GenLIPGatedAttention(nn.Module):
-    def __init__(self, config: GenLIPConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
         self.embedding_dim = config.hidden_size
@@ -212,7 +206,7 @@ class GenLIPGatedAttention(nn.Module):
 
 
 class GenLIPSwigluFFN(nn.Module):
-    def __init__(self, config: GenLIPConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.activation_function = nn.SiLU()
         self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
@@ -228,7 +222,7 @@ class GenLIPSwigluFFN(nn.Module):
 
 
 class GenLIPLayerScale(nn.Module):
-    def __init__(self, config: GenLIPConfig, inplace: bool = False):
+    def __init__(self, config: ModelConfig, inplace: bool = False):
         super().__init__()
         self.lambda1 = nn.Parameter(config.ls_init_value * torch.ones(config.hidden_size))
         self.inplace = inplace
@@ -239,7 +233,7 @@ class GenLIPLayerScale(nn.Module):
 
 
 class GenLIPEncoderLayer(nn.Module):
-    def __init__(self, config: GenLIPConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.embedding_dim = config.hidden_size
         self.layer_norm1 = nn.LayerNorm(self.embedding_dim, eps=config.layer_norm_eps)
@@ -277,7 +271,7 @@ class GenLIPEncoderLayer(nn.Module):
 
 
 class GenLIPEncoder(nn.Module):
-    def __init__(self, config: GenLIPConfig):
+    def __init__(self, config: ModelConfig):
         super().__init__()
         self.layers = nn.ModuleList([GenLIPEncoderLayer(config) for _ in range(config.num_hidden_layers)])
         self.gradient_checkpointing = False
@@ -312,14 +306,21 @@ class GenLIPEncoder(nn.Module):
 
 
 class GenLIP(nn.Module):
-    def __init__(self, config: GenLIPConfig):
+    def __init__(self, config: ModelConfig, dart_config: DARTConfig | None = None):
         super().__init__()
         self.config = config
         self.patch_size = config.patch_size
+        self.spatial_merge_size = config.spatial_merge_size
         self.head_dim = config.hidden_size // config.num_attention_heads
         self.max_position_embeddings = config.max_position_embeddings
 
-        self.vision_embeddings = GenLIPVisionEmbeddings(config)
+        if dart_config is not None:
+            self.vision_embeddings = build_dart(dart_config)
+            self.use_dart = True
+        else:
+            self.vision_embeddings = GenLIPVisionEmbeddings(config)
+            self.use_dart = False
+        self.spatial_merger = SpatialMerger(config)
         self.text_embeddings = TextEmbedding(config)
         self.fusion = EarlyFusion()
         self.encoder = GenLIPEncoder(config)
@@ -328,6 +329,22 @@ class GenLIP(nn.Module):
         self.loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
 
 
+    def _vision_text_position_offset(self, height: int, width: int) -> int:
+        hp = height // self.patch_size // self.spatial_merge_size
+        wp = width // self.patch_size // self.spatial_merge_size
+        return max(hp, wp)
+
+    def _build_vision_position_ids_from_centers(
+        self,
+        patch_centers: torch.Tensor,
+    ) -> torch.Tensor:
+        """Build (t, h, w) mRoPE ids from DART patch centroids in patch units."""
+        patch_size = float(self.patch_size)
+        t = torch.zeros_like(patch_centers[..., 0])
+        h = patch_centers[..., 0] / patch_size
+        w = patch_centers[..., 1] / patch_size
+        return torch.stack([t, h, w], dim=0)
+
     def _build_vision_position_ids(
         self, 
         batch_size: int, 
@@ -335,8 +352,8 @@ class GenLIP(nn.Module):
         width: int,
         device: torch.device,
     ) -> torch.Tensor:
-        hp = height // self.patch_size
-        wp = width // self.patch_size
+        hp = height // self.patch_size // self.spatial_merge_size
+        wp = width // self.patch_size // self.spatial_merge_size
         
         # (B, Hp, Wp)
         t = torch.zeros(batch_size, hp, wp, device=device, dtype=torch.long)
@@ -356,10 +373,13 @@ class GenLIP(nn.Module):
         text_len: int,
         device: torch.device,
         text_attention_mask: torch.Tensor | None = None,
+        patch_centers: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # (3, B, N)
-        vision_position_ids = self._build_vision_position_ids(batch_size, height, width, device)
-        offset = vision_position_ids.max().item() + 1  # scalar; fixed 224 → same for all
+        if patch_centers is not None:
+            vision_position_ids = self._build_vision_position_ids_from_centers(patch_centers)
+        else:
+            vision_position_ids = self._build_vision_position_ids(batch_size, height, width, device)
+        offset = self._vision_text_position_offset(height, width)
 
         if text_attention_mask is None:
             # (B, L)
@@ -437,26 +457,35 @@ class GenLIP(nn.Module):
         labels: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
+        _, _, height, width = pixel_values.shape
+        grid_h = height // self.patch_size
+        grid_w = width // self.patch_size
+
         # (B, N, D)
-        vision = self.vision_embeddings(pixel_values)
+        if self.use_dart:
+            vision, patch_centers = self.vision_embeddings(pixel_values)
+        else:
+            vision = self.vision_embeddings(pixel_values)
+            patch_centers = None
+        vision = self.spatial_merger(vision, grid_h, grid_w)
         # (B, L, D)
         text = self.text_embeddings(input_ids)
         # (B, N+L, D)
         hidden = self.fusion(vision, text)
 
         batch_size, seq_len, _ = hidden.shape
-        _, _, height, width = pixel_values.shape
         vision_len = vision.shape[1]
         text_len = input_ids.shape[1]
         
         # (3, B, N+L)
         position_ids = self._build_fused_position_ids(
-            batch_size, 
-            height, 
-            width, 
-            text_len, 
-            pixel_values.device, 
-            attention_mask
+            batch_size,
+            height,
+            width,
+            text_len,
+            pixel_values.device,
+            attention_mask,
+            patch_centers=patch_centers,
         )
         # (3, B, N+L, Dh)
         frequencies_complex = build_mrope_frequencies(
@@ -481,8 +510,8 @@ class GenLIP(nn.Module):
         
         # (B, N+L, D)
         hidden = self.ln_post(hidden)
-        # (B, L, D)
-        text_hidden = hidden[:, :text_len, :]
+        # (B, L, D) — text tokens follow the vision prefix
+        text_hidden = hidden[:, vision_len:, :]
         # (B, L, V)
         logits = self.lm_head(text_hidden)
         
