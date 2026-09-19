@@ -46,7 +46,7 @@ data:
   tokenizer_name: Qwen/Qwen3-0.6B
   max_text_length: 128
 
-  batch_size: 4
+  batch_size: 2
   num_workers: 1
   pin_memory: true
   drop_last: true
@@ -65,13 +65,15 @@ scheduler:
 
 trainer:
   max_steps: 2000
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 16
   max_grad_norm: 1.0
   eval_steps: 200
   save_steps: 500
-  bf16: true
+  bf16: false
+  log_dir: runs
+  log_every: 10
 
 parallel:
   replicate: 1
-  shard: 2
-  bf16: true
+  shard: 1
+  bf16: false

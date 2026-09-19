@@ -87,6 +87,8 @@ class TrainerConfig:
     eval_steps: int
     save_steps: int
     bf16: bool
+    log_dir: str
+    log_every: int
 
 
 @dataclass
@@ -153,6 +155,9 @@ def load_config(path: str | Path) -> Config:
     scheduler_raw["warmup_steps"] = int(scheduler_raw["warmup_steps"])
     scheduler_raw["min_lr_ratio"] = float(scheduler_raw["min_lr_ratio"])
 
+    trainer_raw = dict(raw["trainer"])
+    trainer_raw["log_dir"] = _resolve_path(trainer_raw.get("log_dir", "runs"))
+
     return Config(
         seed=raw["seed"],
         model=model,
@@ -160,6 +165,6 @@ def load_config(path: str | Path) -> Config:
         data=data,
         optimizer=OptimizerConfig(**optimizer_raw),
         scheduler=SchedulerConfig(**scheduler_raw),
-        trainer=TrainerConfig(**raw["trainer"]),
+        trainer=TrainerConfig(**trainer_raw),
         parallel=ParallelConfig(**raw["parallel"]),
     )

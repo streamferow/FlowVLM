@@ -1,3 +1,6 @@
+import csv
+from pathlib import Path
+
 import torch
 import torch.distributed as dist
 
@@ -14,7 +17,6 @@ class Trainer:
         scheduler,
         *,
         device: torch.device | None = None,
-        log_every: int = 10,
     ):
         self.config = config
         self.model = model
@@ -22,9 +24,20 @@ class Trainer:
         self.loader = loader
         self.scheduler = scheduler
         self.device = device or torch.device("cuda", torch.cuda.current_device())
-        self.log_every = log_every
         self.step = 0
         self.epoch = 0
+        self.loss_history: list[tuple[int, float]] = []
+        self.log_dir = self._init_log_dir(config.log_dir)
+
+    def _init_log_dir(self, log_dir: str) -> Path | None:
+        if not is_main_process():
+            return None
+
+        path = Path(log_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        with (path / "loss.csv").open("w", newline="") as f:
+            csv.writer(f).writerow(["step", "loss", "lr"])
+        return path
 
     def _next_batch(self, iterator):
         try:
@@ -53,6 +66,44 @@ class Trainer:
         loss.backward()
         return loss.detach()
 
+    def _log_metrics(self, avg_loss: float, lr: float):
+        self.loss_history.append((self.step, avg_loss))
+
+        if self.log_dir is None:
+            return
+
+        with (self.log_dir / "loss.csv").open("a", newline="") as f:
+            csv.writer(f).writerow([self.step, f"{avg_loss:.6f}", f"{lr:.2e}"])
+
+        if self.step % self.config.log_every != 0:
+            return
+
+        print(f"step={self.step} loss={avg_loss:.4f} lr={lr:.2e}")
+        self._save_loss_plot()
+
+    def _save_loss_plot(self):
+        if self.log_dir is None or not self.loss_history:
+            return
+
+        try:
+            import matplotlib
+
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except ImportError:
+            return
+
+        steps, losses = zip(*self.loss_history)
+        plt.figure(figsize=(8, 4))
+        plt.plot(steps, losses, linewidth=1.5)
+        plt.xlabel("step")
+        plt.ylabel("loss")
+        plt.title("Training loss")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(self.log_dir / "loss.png", dpi=120)
+        plt.close()
+
     def train(self):
         iterator = iter(self.loader)
         self.optimizer.zero_grad(set_to_none=True)
@@ -69,10 +120,14 @@ class Trainer:
             self.optimizer.zero_grad(set_to_none=True)
             self.step += 1
 
-            if is_main_process() and self.step % self.log_every == 0:
-                avg_loss = step_loss.item() * self.config.gradient_accumulation_steps
-                lr = self.scheduler.get_last_lr()[0]
-                print(f"step={self.step} loss={avg_loss:.4f} lr={lr:.2e}")
+            avg_loss = step_loss.item() * self.config.gradient_accumulation_steps
+            lr = self.scheduler.get_last_lr()[0]
+            self._log_metrics(avg_loss, lr)
+
+        self._save_loss_plot()
+        if self.log_dir is not None:
+            print(f"loss log saved to {self.log_dir / 'loss.csv'}")
+            print(f"loss plot saved to {self.log_dir / 'loss.png'}")
 
         if dist.is_initialized():
             dist.barrier()
