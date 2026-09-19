@@ -29,17 +29,13 @@ def build_hsdp_mesh(replicate: int, shard: int):
 
 
 def apply_hsdp(model: nn.Module, mesh, bf16: bool = True):
+    mp_policy = None
     if bf16:
-        mixed_precision = MixedPrecisionPolicy(
+        mp_policy = MixedPrecisionPolicy(
             param_dtype=torch.bfloat16,
             reduce_dtype=torch.float32,
         )
-    else:
-        mixed_precision = MixedPrecisionPolicy(
-            param_dtype=torch.float16,
-            reduce_dtype=torch.float32,
-        )
     for layer in model.encoder.layers:
-        fully_shard(layer, mesh=mesh, mp_policy=mixed_precision)
-    fully_shard(model, mesh=mesh, mp_policy=mixed_precision)
+        fully_shard(layer, mesh=mesh, mp_policy=mp_policy)
+    fully_shard(model, mesh=mesh, mp_policy=mp_policy)
     return model

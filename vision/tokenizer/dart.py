@@ -210,11 +210,12 @@ def resample_image_by_heights(images, row_heights, final_row_height, version="v2
     cumsum_heights = row_heights.cumsum(dim=1)
     row_chunks = []
 
+    dtype = images.dtype
     if version == "v1":
-        h_lin = torch.linspace(0, 1, steps=final_row_height, device=images.device)
+        h_lin = torch.linspace(0, 1, steps=final_row_height, device=images.device, dtype=dtype)
     else:
-        h_lin = torch.arange(0, final_row_height, device=images.device) / final_row_height
-    w_lin = torch.linspace(0, 1, steps=width, device=images.device)
+        h_lin = torch.arange(0, final_row_height, device=images.device, dtype=dtype) / final_row_height
+    w_lin = torch.linspace(0, 1, steps=width, device=images.device, dtype=dtype)
     h_grid, w_grid = torch.meshgrid(h_lin, w_lin, indexing="ij")
 
     for i in range(num_rows):
@@ -291,16 +292,17 @@ def dynamic_image_patch_sample(images, row_heights, new_edges, shape=(16, 16), v
     x_starts = new_edges[:, :-1]
     x_ends = new_edges[:, 1:]
 
+    dtype = images.dtype
     if version == "v1":
-        t_lin = torch.linspace(0, 1, steps=tar_w, device=images.device).view(1, 1, tar_w)
+        t_lin = torch.linspace(0, 1, steps=tar_w, device=images.device, dtype=dtype).view(1, 1, tar_w)
     else:
-        t_lin = torch.arange(0, tar_w, device=images.device).view(1, 1, tar_w) / tar_w
+        t_lin = torch.arange(0, tar_w, device=images.device, dtype=dtype).view(1, 1, tar_w) / tar_w
     t_lin = t_lin.expand(batch_size, seqlen, tar_w)
 
     x_coords_all = (x_starts.unsqueeze(-1) + (x_ends.unsqueeze(-1) - x_starts.unsqueeze(-1)) * t_lin).reshape(
         batch_size, seqlen * tar_w
     )
-    y_1d = torch.linspace(0, hh - 1, steps=tar_h, device=images.device)
+    y_1d = torch.linspace(0, hh - 1, steps=tar_h, device=images.device, dtype=dtype)
     y_2d = y_1d.view(1, tar_h).expand(batch_size, -1)
     x_grid = x_coords_all.unsqueeze(1).expand(-1, tar_h, -1)
     y_grid = y_2d.unsqueeze(-1).expand(-1, -1, seqlen * tar_w)
