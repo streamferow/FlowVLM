@@ -13,6 +13,18 @@ from vision.tokenizer.dart import build_dart
 from .config import DARTConfig, ModelConfig
 
 
+def _flex_attention_block_size() -> int:
+    if torch.cuda.is_available() and torch.cuda.get_device_capability() < (8, 0):
+        return 64
+    return 128
+
+
+def _build_flex_attention():
+    if torch.cuda.is_available() and torch.cuda.get_device_capability() >= (8, 0):
+        return torch.compile(flex_attention, dynamic=False, mode="max-autotune-no-cudagraphs")
+    return flex_attention
+
+
 class SpatialMerger(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
@@ -147,7 +159,7 @@ class GenLIPGatedAttention(nn.Module):
         self.v_projection = nn.Linear(self.embedding_dim, self.embedding_dim)
         self.q_projection = nn.Linear(self.embedding_dim, self.embedding_dim * 2)
         self.out_projection = nn.Linear(self.embedding_dim, self.embedding_dim)
-        self.flex_attention = torch.compile(flex_attention, dynamic=False, mode="max-autotune-no-cudagraphs")
+        self.flex_attention = _build_flex_attention()
 
 
     def forward(
@@ -403,8 +415,9 @@ class GenLIP(nn.Module):
         vision_len: int,
         seq_len: int,
         device: torch.device,
-        block_size: int = 128,
+        block_size: int | None = None,
     ) -> dict:
+        block_size = block_size or _flex_attention_block_size()
         if seq_len > self.max_position_embeddings:
             raise ValueError(
                 f"seq_len={seq_len} > max_position_embeddings={self.max_position_embeddings}"
@@ -446,6 +459,7 @@ class GenLIP(nn.Module):
             Q_LEN=padded_seq_len,
             KV_LEN=padded_seq_len,
             device=device,
+            BLOCK_SIZE=block_size,
         )
         return {"block_mask": block_mask, "max_seqlen": padded_seq_len}
 
