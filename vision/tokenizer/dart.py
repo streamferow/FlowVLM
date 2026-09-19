@@ -38,9 +38,9 @@ class DARTScorePredictionNetwork(nn.Module):
         x: torch.Tensor,       # (B, C, H, W)
         shape: tuple[int, int] # (Hp, Wp)
     ) -> torch.Tensor:
-        # Pass pixel_values through the feature extractor network to get the feature vectors
-        # B, C, H, W
-        x = self.features(x)
+        # MobileNet BatchNorm buffers are fp32; run backbone outside low-precision cast.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            x = self.features(x.float())
         # B, H, W, C
         x = x.permute(0, 2, 3, 1)
         
