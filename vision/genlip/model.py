@@ -240,7 +240,7 @@ class GenLIPLayerScale(nn.Module):
         self.inplace = inplace
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return hidden_states._mul_(self.lambda1) if self.inplace else hidden_states * self.lambda1
+        return hidden_states.mul_(self.lambda1) if self.inplace else hidden_states * self.lambda1
 
 
 
