@@ -32,12 +32,12 @@ def apply_hsdp(model: nn.Module, mesh, bf16: bool = True):
     if bf16:
         mixed_precision = MixedPrecisionPolicy(
             param_dtype=torch.bfloat16,
-            reduce_type=torch.float32,
+            reduce_dtype=torch.float32,
         )
     else:
         mixed_precision = MixedPrecisionPolicy(
             param_dtype=torch.float16,
-            reduce_type=torch.float32,
+            reduce_dtype=torch.float32,
         )
     for layer in model.encoder.layers:
         fully_shard(layer, mesh=mesh, mp_policy=mixed_precision)
